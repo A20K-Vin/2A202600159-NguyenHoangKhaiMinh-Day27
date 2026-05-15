@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import dotenv
+
+dotenv.load_dotenv()
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import csv
 import json
 from pathlib import Path
-from urllib import request
+
+import aiohttp
 
 from src.config import DISCORD_WEBHOOK_URL, OUTPUT_DIR, VALID_STATUSES
 
@@ -59,10 +61,10 @@ def write_summary(summary: dict[str, int | str], output_path: str | Path) -> Pat
     return output_file
 
 
-def send_discord_message(summary: dict[str, int | str], webhook_url: str = DISCORD_WEBHOOK_URL) -> None:
-    if not webhook_url:
-        return
-
+async def _send_discord_message_async(
+    summary: dict[str, int | str],
+    webhook_url: str,
+) -> None:
     message = (
         f"Sales Data Quality {summary['validation_status'].upper()}\n"
         f"Rows: {summary['row_count']}\n"
@@ -70,16 +72,30 @@ def send_discord_message(summary: dict[str, int | str], webhook_url: str = DISCO
         f"Invalid amounts: {summary['invalid_amounts']}\n"
         f"Invalid statuses: {summary['invalid_statuses']}"
     )
-    payload = json.dumps({"content": message}).encode("utf-8")
-    http_request = request.Request(
-        webhook_url,
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with request.urlopen(http_request, timeout=15) as response:
-        if response.status >= 400:
-            raise RuntimeError(f"Discord webhook failed with status {response.status}")
+
+    timeout = aiohttp.ClientTimeout(total=15)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.post(webhook_url, json={"content": message}) as response:
+            if response.status >= 400:
+                response_text = await response.text()
+                raise RuntimeError(
+                    f"Discord webhook failed with status {response.status}: {response_text}"
+                )
+
+
+def send_discord_message(summary: dict[str, int | str], webhook_url: str = DISCORD_WEBHOOK_URL) -> None:
+    if not webhook_url:
+        return
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(_send_discord_message_async(summary, webhook_url))
+    else:
+        raise RuntimeError(
+            "send_discord_message() cannot be called from a running event loop. "
+            "Use _send_discord_message_async() and await it instead."
+        )
 
 
 def run_lab_check(
